@@ -1826,27 +1826,62 @@ function show(html){byId("root").innerHTML=html;netBar();}
 function toast(msg,err){const r=byId("toast");r.innerHTML=`<div class="toast ${err?"err":""}">${esc(msg)}</div>`;setTimeout(()=>r.innerHTML="",3200);}
 
 /* setup screen (first run: paste firebase config + admin email) */
-function scrSetup(){
- show(`<div class="welcome one"><div class="pane mgmt" style="cursor:default">
-  <div class="pane-in" style="max-width:520px">
-   <div class="logo-big">⚙️</div><h1>إعداد البوابة لأول مرة</h1>
-   <p class="sub">الصق إعدادات Firebase (من Project settings → SDK setup and configuration → Config) وحدد إيميل المالك.</p>
-   <textarea class="inp" id="su-cfg" rows="7" dir="ltr" placeholder='{"apiKey":"...","authDomain":"...","projectId":"...","storageBucket":"...","messagingSenderId":"...","appId":"..."}'></textarea>
-   <input class="inp" id="su-admin" dir="ltr" placeholder="admin@email.com — إيميل المالك (الحساب الرئيسي)">
-   <button class="btn cy" id="su-go">حفظ وتشغيل البوابة</button>
-   <p class="mini">هذه الإعدادات ليست سرًا (محميّة بقواعد الأمان) وتُحفظ على هذا الجهاز فقط — ولاحقًا زر «رابط تجهيز الأجهزة» ينقلها لباقي الأجهزة تلقائيًا.</p>
-  </div></div></div>`);
- byId("su-go").onclick=()=>{
+function parseFirebaseCfg(raw){
+  raw=String(raw||"");
   try{
-   let txt=byId("su-cfg").value.trim().replace(/^const\s+\w+\s*=\s*/,"").replace(/;\s*$/,"");
-   txt=txt.replace(/(\w+)\s*:/g,'"$1":').replace(/'/g,'"').replace(/""(\w+)"":/g,'"$1":');
-   const fb=JSON.parse(txt);const admin=lc(byId("su-admin").value);
-   if(!fb.apiKey||!fb.projectId||!admin.includes("@"))throw 0;
-   CFG={firebase:fb,adminEmail:admin};localStorage.setItem(CFG_KEY,JSON.stringify(CFG));location.reload();
-  }catch(e){toast("تأكد من صيغة الإعدادات وإيميل المالك","err")}
- };
+    const j=JSON.parse(raw.trim());
+    if(j&&j.apiKey)return j;
+  }catch(e){}
+  const keys=["apiKey","authDomain","projectId","storageBucket","messagingSenderId","appId","measurementId","databaseURL"];
+  const out={};
+  keys.forEach(k=>{
+    const m=raw.match(new RegExp(k+"\\s*[:=]\\s*[\"']([^\"']+)[\"']"));
+    if(m)out[k]=m[1].trim();
+  });
+  return out;
 }
 
+function cfgStatus(){
+  const el=byId("su-status");
+  if(!el)return null;
+  const cfg=parseFirebaseCfg(byId("su-cfg").value);
+  const need=["apiKey","authDomain","projectId","appId"];
+  const missing=need.filter(k=>!cfg[k]);
+  if(!byId("su-cfg").value.trim()){el.innerHTML="";return null;}
+  if(missing.length){
+    el.innerHTML=`<span class="bad" style="color:#FCA5A5;font-weight:800">✗ لم أتعرف على: ${missing.join("، ")} — الصق كود Firebase كما هو بالظبط</span>`;
+    return null;
+  }
+  el.innerHTML=`<span class="good" style="color:#4ADE80;font-weight:800">✓ تم التعرف على المشروع: <b dir="ltr">${esc(cfg.projectId)}</b></span>`;
+  return cfg;
+}
+
+function scrSetup(){
+  show(`<div class="welcome one">
+    <div class="pane mgmt" style="cursor:default">
+      <div class="pane-in" style="max-width:560px">
+        <div class="logo-big">⚙️</div>
+        <h1>إعداد البوابة لأول مرة</h1>
+        <p class="sub">من Firebase: Project settings → عند "SDK setup and configuration" اختر Config → <b>انسخ الكود كله زي ما هو والصقه هنا</b></p>
+        <textarea class="inp" id="su-cfg" rows="8" dir="ltr" placeholder='const firebaseConfig = {\\n  apiKey: "AIza...",\\n  ...\\n};'></textarea>
+        <p class="mini" id="su-status"></p>
+        <input class="inp" id="su-admin" dir="ltr" placeholder="إيميل المالك — نفس الإيميل الموجود في قواعد Firestore">
+        <button class="btn cy" id="su-go">حفظ وتشغيل البوابة</button>
+        <p class="mini">هذه الإعدادات ليست سرًا وتُحفظ على هذا الجهاز فقط.</p>
+      </div>
+    </div>
+  </div>`);
+  byId("su-cfg").addEventListener("input",cfgStatus);
+  byId("su-go").onclick=()=>{
+    const fb=cfgStatus();
+    if(!fb)return toast("الصق كود إعدادات Firebase أولًا — لازم يظهر سطر ✓ أخضر","err");
+    const admin=lc(byId("su-admin").value);
+    if(!admin.includes("@"))return toast("اكتب إيميل المالك (نفس إيميل قواعد الأمان)","err");
+    CFG={firebase:fb,adminEmail:admin};
+    localStorage.setItem(CFG_KEY,JSON.stringify(CFG));
+    location.reload();
+  };
+}
 /* split welcome */
 function scrWelcome(){
  show(`<div class="welcome">
