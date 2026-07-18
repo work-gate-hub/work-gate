@@ -2740,11 +2740,11 @@ function dlTemplate(kind){
 /* ---- import ---- */
 const HKEYS={
  balAfter:["الشكك بعد الدفع","الشك بعد الدفع"],
- name:["اسم العميل","العميل","customer"],
- route:["اسم البلد","البلد","الخط","route","town","city"],
- addr:["العنوان","address"],
- phone:["الهاتف","التليفون","رقم الهاتف","تليفون","موبايل","phone"],
- bal:["شكك","الشكك","المديونية","مديونية","الرصيد","debt","balance"],
+ name:["اسم العميل","العميل","اسم الزبون","الزبون","الاسم","الإسم","customer","client","name"],
+ route:["اسم البلد","البلد","الخط","خط","المنطقة","المنطقه","المدينة","المدينه","route","town","city","area","zone","line"],
+ addr:["العنوان","عنوان","المكان","address","location"],
+ phone:["الهاتف","التليفون","رقم الهاتف","رقم التليفون","رقم الموبايل","تليفون","موبايل","الموبايل","الجوال","جوال","phone","mobile","tel","phone number"],
+ bal:["شكك","الشكك","المديونية","مديونية","الرصيد","الرصيد السابق","رصيد سابق","رصيد أول","رصيد اول","رصيد","debt","balance","opening"],
  pname:["الصنف","اسم الصنف","product"],
  unit:["الوحدة","unit"],
  price:["السعر للكيس / الكرتونة","سعر البيع","السعر","price"],
@@ -2764,18 +2764,49 @@ function detectHeader(rows,fields,mustHave){
  return null;
 }
 async function readWBFile(file){const buf=await file.arrayBuffer();return XLSX.read(buf,{type:"array"});}
-function parseCustomerSheet(ws,sheetName,useSheetAsRoute){
+function parseCustomerSheet(ws,sheetName,useSheetAsRoute,addNotes){
  const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:""});
- const det=detectHeader(rows,["balAfter","name","route","addr","phone","bal"],"name");
- if(!det)return{rows:[],skipped:0,bad:true};
- const out=[];let skipped=0;
- for(let r=det.row+1;r<rows.length;r++){const row=rows[r]||[];const name=String(row[det.map.name]??"").trim();
-  if(!name){skipped++;continue;}
-  const balA=det.map.balAfter!==undefined?row[det.map.balAfter]:"";
-  const bal=(balA!==""&&balA!==null&&balA!==undefined)?balA:(det.map.bal!==undefined?row[det.map.bal]:0);
-  out.push({name,route:useSheetAsRoute?String(sheetName).trim():(det.map.route!==undefined?String(row[det.map.route]??"").trim():""),address:det.map.addr!==undefined?String(row[det.map.addr]??"").trim():"",phone:det.map.phone!==undefined?fixPhone(row[det.map.phone]):"",opening:num(bal)});
+ if(!rows.length)return{rows:[],skipped:0,bad:true,extra:[]};
+ const fields=["balAfter","name","route","addr","phone","bal"];
+ let det=detectHeader(rows,fields,"name");
+ let headerRow,map;
+ if(det){headerRow=det.row;map=det.map;}
+ else{
+  let hr=0;while(hr<rows.length&&(rows[hr]||[]).every(c=>String(c).trim()===""))hr++;
+  if(hr>=rows.length)return{rows:[],skipped:0,bad:true,extra:[]};
+  const hcells=(rows[hr]||[]).map(c=>String(c).trim());
+  const looksHeader=hcells.some(c=>c!==""&&!/^[\d.,\-\s]+$/.test(c));
+  map=mapHeaders(rows[hr],fields);
+  if(looksHeader){headerRow=hr;if(map.name===undefined)map.name=0;}
+  else{headerRow=hr-1;map={name:0};}
  }
- return{rows:out,skipped,bad:false};
+ if(map.phone===undefined){
+  const s=headerRow+1;let ncol=0;for(let r=s;r<Math.min(rows.length,s+25);r++)ncol=Math.max(ncol,(rows[r]||[]).length);
+  for(let ci=0;ci<ncol;ci++){if(Object.values(map).indexOf(ci)>=0)continue;let ph=0,tot=0;
+   for(let r=s;r<Math.min(rows.length,s+25);r++){const raw=String((rows[r]||[])[ci]??"").trim();if(!raw)continue;tot++;const d=raw.replace(/\D/g,"");if(d.length>=7&&d.length<=15)ph++;}
+   if(tot>=2&&ph/tot>=0.6){map.phone=ci;break;}}
+ }
+ const used=new Set(Object.values(map));const hrow=rows[headerRow]||[];
+ let ncols=0;const base=headerRow>=0?headerRow:0;for(let r=base;r<Math.min(rows.length,base+30);r++)ncols=Math.max(ncols,(rows[r]||[]).length);
+ const extra=[];
+ for(let ci=0;ci<ncols;ci++){if(used.has(ci))continue;let hasData=false;
+  for(let r=headerRow+1;r<rows.length;r++){if(String((rows[r]||[])[ci]??"").trim()!==""){hasData=true;break;}}
+  if(hasData){const h=String((hrow[ci]??"")).trim();extra.push({i:ci,h:h||(t("imp_col")+" "+(ci+1))});}
+ }
+ const out=[];let skipped=0;
+ for(let r=headerRow+1;r<rows.length;r++){const row=rows[r]||[];
+  const name=String(row[map.name]??"").trim();
+  const phone=map.phone!==undefined?fixPhone(row[map.phone]):"";
+  const address=map.addr!==undefined?String(row[map.addr]??"").trim():"";
+  const route=useSheetAsRoute?String(sheetName).trim():(map.route!==undefined?String(row[map.route]??"").trim():"");
+  const balA=map.balAfter!==undefined?row[map.balAfter]:"";
+  const bal=(balA!==""&&balA!=null)?balA:(map.bal!==undefined?row[map.bal]:0);
+  if(!name&&!phone&&!address&&!(route&&!useSheetAsRoute)){skipped++;continue;}
+  let notes="";
+  if(addNotes&&extra.length)notes=extra.map(e=>{const v=String(row[e.i]??"").trim();return v?`${e.h}: ${v}`:"";}).filter(Boolean).join(" | ");
+  out.push({name,route,address,phone,opening:num(bal),notes});
+ }
+ return{rows:out,skipped,bad:out.length===0,extra:extra.map(e=>e.h)};
 }
 function parseProductsWB(wb){
  const out=[];let skipped=0;let any=false;
@@ -2793,26 +2824,28 @@ function importCustomersUI(){
   <div class="field"><label>${t("im_pick")}</label><input class="inp" type="file" id="im-file" accept=".xlsx,.xls,.csv"></div>
   <label class="check-row"><span class="switch"><input type="checkbox" id="im-all" checked><i></i></span> ${t("im_allsheets")}</label>
   <label class="check-row"><span class="switch"><input type="checkbox" id="im-dup" checked><i></i></span> ${t("im_dup")}</label>
+  <label class="check-row"><span class="switch"><input type="checkbox" id="im-notes" checked><i></i></span> ${t("imp_addnotes")}</label>
   <div id="im-prev"></div>
  </div><div class="modal-f"><button class="btn" id="im-go" disabled>${ic("check")} ${t("im_go")}</button>
   <button class="btn ghost" onclick="dlTemplate('cust')">${ic("dl")} ${t("st_tpl")}</button></div>`,true);
  let parsed=null;
  const doParse=async()=>{const f=byId("im-file").files[0];if(!f)return;
-  try{const wb=await readWBFile(f);const all=byId("im-all").checked;let rows=[],skipped=0,bad=true;
+  try{const wb=await readWBFile(f);const all=byId("im-all").checked;const addNotes=byId("im-notes").checked;let rows=[],skipped=0,bad=true,extra=[];
    const sheets=all?wb.SheetNames.filter(sn=>!SKIP_SHEETS.includes(normH(sn))):[wb.SheetNames[0]];
-   sheets.forEach(sn=>{const r=parseCustomerSheet(wb.Sheets[sn],sn,all);if(!r.bad)bad=false;rows=rows.concat(r.rows);skipped+=r.skipped;});
-   if(bad){byId("im-prev").innerHTML=`<p class="tag-note">${t("im_nohead")}</p>`;byId("im-go").disabled=true;return;}
+   sheets.forEach(sn=>{const r=parseCustomerSheet(wb.Sheets[sn],sn,all,addNotes);if(!r.bad)bad=false;rows=rows.concat(r.rows);skipped+=r.skipped;(r.extra||[]).forEach(h=>{if(h&&extra.indexOf(h)<0)extra.push(h);});});
+   if(bad&&!rows.length){byId("im-prev").innerHTML=`<p class="tag-note">${t("im_nohead")}</p>`;byId("im-go").disabled=true;return;}
    parsed=rows;
-   byId("im-prev").innerHTML=`<div class="kv"><span>${t("im_preview")}</span><b>${rows.length} ${t("im_rows")} — ${skipped} ${t("im_skipped")}</b></div>
-    <div class="tbl-wrap" style="max-height:220px;overflow:auto;margin-top:8px"><table class="tbl"><thead><tr><th>${t("c_name")}</th><th>${t("c_route")}</th><th>${t("c_phone")}</th><th>${t("c_bal")}</th></tr></thead><tbody>${rows.slice(0,15).map(r=>`<tr><td class="st">${esc(r.name)}</td><td>${esc(r.route)}</td><td class="num">${esc(r.phone)}</td><td class="num">${money(r.opening)}</td></tr>`).join("")}</tbody></table></div>`;
+   const extraTxt=extra.length?`<div class="kv"><span style="color:var(--red)">⚠️ ${t("imp_unmapped")}</span><b>${esc(extra.join("، "))}</b></div><p class="tag-note">${byId("im-notes").checked?t("imp_notes_on"):t("imp_notes_off")}</p>`:"";
+   byId("im-prev").innerHTML=`<div class="kv"><span>${t("im_preview")}</span><b>${rows.length} ${t("im_rows")} — ${skipped} ${t("im_skipped")}</b></div>${extraTxt}
+    <div class="tbl-wrap" style="max-height:200px;overflow:auto;margin-top:8px"><table class="tbl"><thead><tr><th>${t("c_name")}</th><th>${t("c_route")}</th><th>${t("c_phone")}</th><th>${t("c_bal")}</th></tr></thead><tbody>${rows.slice(0,15).map(r=>`<tr><td class="st">${esc(r.name)||"—"}</td><td class="st">${esc(r.route)||"—"}</td><td class="num" dir="ltr">${esc(r.phone)||"—"}</td><td class="num">${money(num(r.opening))}</td></tr>`).join("")}</tbody></table></div>`;
    byId("im-go").disabled=!rows.length;
   }catch(e){console.warn(e);toast(t("invalid_file"),"err")}};
- byId("im-file").onchange=doParse;byId("im-all").onchange=doParse;
- byId("im-go").onclick=()=>{if(!parsed)return;const skipDup=byId("im-dup").checked;let added=0;
-  parsed.forEach(r=>{let route=null;if(r.route){route=db.routes.find(x=>x.name===r.route);if(!route){route={id:uid(),name:r.route};db.routes.push(route);}}
-   if(skipDup&&db.customers.some(c=>c.name===r.name&&(!route||c.routeId===route.id)))return;
-   db.customers.push({id:uid(),name:r.name,routeId:route?route.id:"",address:r.address,phone:r.phone,phone2:"",opening:r.opening,notes:""});added++;});
-  save();closeModal();toast(`${t("im_done")} — ${added}`);go("cust");};
+ byId("im-file").onchange=doParse;byId("im-all").onchange=doParse;byId("im-notes").onchange=doParse;
+ byId("im-go").onclick=()=>{if(!parsed)return;const skipDup=byId("im-dup").checked;const sec=V.csec||"stands";let added=0;
+  parsed.forEach(r=>{let route=null;if(r.route){route=db.routes.find(x=>x.name===r.route)||db.routes.find(x=>x.name.trim().toLowerCase()===r.route.trim().toLowerCase());if(!route){route={id:uid(),name:r.route};db.routes.push(route);}}
+   if(skipDup&&r.name&&db.customers.some(c=>cSec(c)===sec&&c.name===r.name&&(!route||c.routeId===route.id)))return;
+   db.customers.push({id:uid(),sec,name:r.name||"",routeId:route?route.id:"",address:r.address||"",phone:r.phone||"",phone2:"",opening:num(r.opening),notes:r.notes||""});added++;});
+  save();closeModal();toast(`${t("im_done")} — ${added}`);go(CUR);};
 }
 function importProductsUI(){
  modal(`${mhead(t("st_imp_prod"),"up")}<div class="modal-b">
@@ -3374,12 +3407,20 @@ function custTable(){
   </div></td></tr>`}).join("")}
  </tbody></table></div>${list.length>400?`<p class="hint" style="margin-top:8px">400 / ${list.length}</p>`:""}`;
 }
+function cfResolveRoute(){
+ const inp=byId("cf-route-in");if(!inp)return "";
+ const name=inp.value.trim();
+ if(!name||name===t("c_no_route"))return "";
+ let r=db.routes.find(x=>x.name.trim()===name)||db.routes.find(x=>x.name.trim().toLowerCase()===name.toLowerCase());
+ if(!r){r={id:uid(),name};db.routes.push(r);}
+ return r.id;
+}
 function custEdit(id){
  const c=id?C_get(id):{name:"",routeId:(rfState().routes.length===1?rfState().routes[0]:""),address:"",phone:"",phone2:"",opening:0,notes:""};
  modal(`${mhead(id?t("edit"):t("c_new"),"users")}<div class="modal-b">
   <div class="field"><label>${t("c_name")} *</label><input class="inp" id="cf-name" value="${esc(c.name)}"></div>
   <div class="frow">
-   <div class="field"><label>${t("c_route")}</label><select class="inp" id="cf-route"><option value="">${t("c_no_route")}</option>${secRoutesEdit(V.csec,c.routeId).map(r=>`<option value="${r.id}" ${c.routeId===r.id?"selected":""}>${esc(r.name)}</option>`).join("")}</select></div>
+   <div class="field"><label>${t("c_route")}</label><input class="inp" id="cf-route-in" list="cf-route-dl" autocomplete="off" placeholder="${t("route_search_add")}" value="${c.routeId?esc(R_name(c.routeId)):""}"><datalist id="cf-route-dl">${secRoutesEdit(V.csec,c.routeId).map(r=>`<option value="${esc(r.name)}"></option>`).join("")}</datalist></div>
    <div class="field"><label>${t("c_phone")}</label><input class="inp num" id="cf-phone" inputmode="tel" value="${esc(c.phone||"")}"></div>
   </div>
   <div class="field"><label>${t("c_addr")}</label><input class="inp" id="cf-addr" value="${esc(c.address||"")}"></div>
@@ -3390,7 +3431,7 @@ function custEdit(id){
   <div class="field"><label>${t("notes")} (${t("optional")})</label><textarea class="inp" id="cf-notes">${esc(c.notes||"")}</textarea></div>
  </div><div class="modal-f"><button class="btn" id="cf-save">${ic("check")} ${t("save")}</button><button class="btn ghost" onclick="closeModal()">${t("cancel")}</button></div>`);
  byId("cf-save").onclick=()=>{const name=byId("cf-name").value.trim();if(!name)return toast(t("need_name"),"err");
-  const vals={name,routeId:byId("cf-route").value,phone:fixPhone(byId("cf-phone").value),phone2:fixPhone(byId("cf-phone2").value),address:byId("cf-addr").value.trim(),opening:num(byId("cf-open").value),notes:byId("cf-notes").value.trim()};
+  const vals={name,routeId:cfResolveRoute(),phone:fixPhone(byId("cf-phone").value),phone2:fixPhone(byId("cf-phone2").value),address:byId("cf-addr").value.trim(),opening:num(byId("cf-open").value),notes:byId("cf-notes").value.trim()};
   if(id){const before=C_get(id);const changes=custDiff(before,vals);Object.assign(before,vals);clogPush("edit",before,changes);}
   else{const nc=Object.assign({id:uid(),sec:V.csec||"stands"},vals);db.customers.push(nc);clogPush("add",nc,"");}
   save();closeModal();toast(t("toast_saved"));go(CUR);};
@@ -3854,7 +3895,7 @@ Object.assign(T.ar,{
  sy_hint:"اربط النظام بملف مزامنة واحد (nizam-sync.json). كل تعديل يتسجل في الملف تلقائيًا. افتح نفس الملف من متصفح تاني أو جهاز تاني (لو الملف في فولدر متزامن مع Google Drive/OneDrive) وهتلاقي آخر شغلك زي ما سيبته.",
  sy_unsupported:"هذه الخاصية تعمل على Chrome أو Edge على الكمبيوتر. على الموبايل استخدم النسخة الاحتياطية.",
  sy_resume:"استئناف المزامنة",sy_loaded:"تم تحميل أحدث نسخة من ملف المزامنة ✓",sy_saved:"تم ربط ملف المزامنة ✓",
- print_stock:"طباعة جرد المخزن",print_report:"طباعة التقرير",print_stmt:"طباعة كشف الحساب",stmt:"كشف حساب",inv_count:"عدد الفواتير",
+ print_stock:"طباعة جرد المخزن",route_search_add:"ابحث أو اكتب اسم خط جديد",imp_addnotes:"أضف الأعمدة غير المعروفة إلى الملاحظات",imp_unmapped:"أعمدة غير معروفة",imp_notes_on:"سيتم حفظ قيمها داخل ملاحظات كل عميل.",imp_notes_off:"سيتم تجاهل هذه الأعمدة.",imp_col:"عمود",print_report:"طباعة التقرير",print_stmt:"طباعة كشف الحساب",stmt:"كشف حساب",inv_count:"عدد الفواتير",
 });
 Object.assign(T.en,{
  cx_add:"Add section",cx_new:"New section",cx_name:"Section name",cx_icon:"Icon",cx_tpl:"Start from a template",cx_del_q:"The section and everything inside it will be deleted permanently.",cx_empty:"Section is empty — add your first block",cx_empty_p:"A table with your own columns (incl. formulas), a KPI card, a chart, notes, or a task list.",
@@ -3875,7 +3916,7 @@ Object.assign(T.en,{
  sy_hint:"Link the system to one sync file (nizam-sync.json). Every change is written to it automatically. Open the same file from another browser or PC (put it in a Google Drive/OneDrive synced folder) and you continue exactly where you left off.",
  sy_unsupported:"This works on Chrome or Edge on PC. On mobile, use Backup/Restore.",
  sy_resume:"Resume sync",sy_loaded:"Latest version loaded from sync file ✓",sy_saved:"Sync file linked ✓",
- print_stock:"Print stock count",print_report:"Print report",print_stmt:"Print statement",stmt:"Statement",inv_count:"Invoices",
+ print_stock:"Print stock count",route_search_add:"Search or type a new line",imp_addnotes:"Add unrecognized columns to notes",imp_unmapped:"Unrecognized columns",imp_notes_on:"Their values are saved in each customer's notes.",imp_notes_off:"These columns will be ignored.",imp_col:"Column",print_report:"Print report",print_stmt:"Print statement",stmt:"Statement",inv_count:"Invoices",
 });
 
 /* ---------- custom sections: data helpers ---------- */
