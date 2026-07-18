@@ -1,5 +1,5 @@
 /* بوابة التوزيع — Service Worker (offline-first app shell) */
-const VER="business-cloud-v4";
+const VER="business-cloud-v5";
 const SHELL=["./","./index.html","./manifest.json","./icon-192.png","./icon-512.png"];
 self.addEventListener("install",e=>{self.skipWaiting();e.waitUntil(caches.open(VER).then(c=>c.addAll(SHELL)))});
 self.addEventListener("activate",e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==VER).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
